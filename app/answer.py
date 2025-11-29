@@ -29,11 +29,12 @@ def compose_final_answer(query: str, step_outputs: Dict[int, AgentResponse], his
     if not successful:
         return "I could not complete your request because every tool failed. Please try again."
 
+    # For document summarizer, return the markdown directly
     stitched = " | ".join(str(s.output.result) for s in successful if s.output)
 
     api_key = os.getenv("OPENROUTER_API_KEY")
     if OpenAI is None or not api_key:
-        return f"Based on the tools, here is what I found: {stitched}"
+        return stitched  # Return markdown directly without prefix
 
     try:
         client = OpenAI(

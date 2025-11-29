@@ -114,10 +114,117 @@ STYLES = """
             background: var(--panel);
             border: 1px solid var(--border);
             border-radius: 14px;
-            padding: 14px;
-            white-space: pre-wrap;
+            padding: 18px;
             min-height: 60px;
             position: relative;
+            line-height: 1.7;
+            font-size: 15px;
+            color: var(--text);
+            max-height: 70vh;
+            overflow-y: auto;
+          }
+          .result-box:not(:has(.markdown-content)) {
+            white-space: pre-wrap;
+          }
+          .result-box::-webkit-scrollbar {
+            width: 8px;
+          }
+          .result-box::-webkit-scrollbar-track {
+            background: var(--card);
+            border-radius: 4px;
+          }
+          .result-box::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 4px;
+          }
+          .result-box::-webkit-scrollbar-thumb:hover {
+            background: var(--muted);
+          }
+          /* Markdown styling */
+          .markdown-content {
+            color: var(--text);
+          }
+          .markdown-content h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent);
+            margin: 0 0 20px 0;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--border);
+          }
+          .markdown-content h2 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #fff;
+            margin: 24px 0 12px 0;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border);
+          }
+          .markdown-content h3 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+            margin: 20px 0 10px 0;
+          }
+          .markdown-content ul, .markdown-content ol {
+            margin: 12px 0;
+            padding-left: 24px;
+            line-height: 1.8;
+          }
+          .markdown-content li {
+            margin-bottom: 8px;
+          }
+          .markdown-content p {
+            margin: 12px 0;
+            line-height: 1.7;
+          }
+          .markdown-content strong {
+            color: var(--accent);
+            font-weight: 600;
+          }
+          .markdown-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+          }
+          .markdown-content th {
+            background: var(--panel);
+            padding: 10px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--accent);
+            border-bottom: 2px solid var(--border);
+          }
+          .markdown-content td {
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+          }
+          .markdown-content tr:last-child td {
+            border-bottom: none;
+          }
+          .markdown-content code {
+            background: var(--card);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.9em;
+            color: var(--accent);
+          }
+          .markdown-content pre {
+            background: var(--card);
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            overflow-x: auto;
+            margin: 12px 0;
+          }
+          .markdown-content pre code {
+            background: transparent;
+            padding: 0;
           }
           .copy-btn {
             position: absolute; top: 10px; right: 10px;
@@ -262,6 +369,7 @@ def _render_page(title: str, script_body: str) -> HTMLResponse:
         <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
         <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
         <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
         <script type="text/babel">
           {COMMON_REACT}
           {script_body}
@@ -282,10 +390,27 @@ def render_home() -> HTMLResponse:
             const [usedAgents, setUsedAgents] = useState([]);
             const [intermediate, setIntermediate] = useState({});
             const [status, setStatus] = useState('');
+            
+            // Function to render markdown
+            const renderMarkdown = (text) => {
+              if (!text || typeof text !== 'string') return text;
+              try {
+                // Use marked.js to convert markdown to HTML
+                if (typeof marked !== 'undefined') {
+                  const html = marked.parse(text);
+                  return <div className="markdown-content" dangerouslySetInnerHTML={{ __html: html }} />;
+                }
+                // Fallback if marked is not loaded
+                return text;
+              } catch (e) {
+                return text;
+              }
+            };
             const [error, setError] = useState(null);
             const [openIntermediate, setOpenIntermediate] = useState(false);
             const [conversationId, setConversationId] = useState(initialConv);
             const [fileName, setFileName] = useState('');
+            const [uploadedFiles, setUploadedFiles] = useState([]); // Track uploaded files separately
 
             useEffect(() => {
               fetch('/api/agents').then((r) => r.json()).then(setAgents).catch(() => setAgents([]));
@@ -299,11 +424,67 @@ def render_home() -> HTMLResponse:
               setUsedAgents([]);
               setIntermediate({});
               setError(null);
+              
+              // Store files to send (will clear after submission)
+              const filesToSend = [...uploadedFiles];
+              
+              // Use files stored for this submission
+              let fileUploads = [...filesToSend];
+              
+              // Fallback: Also check for file markers in query (for backward compatibility)
+              const filePattern = /\[FILE_UPLOAD:(.+?):([^:]+):([^\]]+)\]/g;
+              let match;
+              let cleanQuery = query;
+              
+              while ((match = filePattern.exec(query)) !== null) {
+                const dataUrl = match[1];
+                const filename = match[2];
+                const mimeType = match[3];
+                
+                // Extract base64 data from data URL
+                let base64Data = '';
+                if (dataUrl.includes('base64,')) {
+                  base64Data = dataUrl.split('base64,')[1];
+                } else if (dataUrl.includes(',')) {
+                  base64Data = dataUrl.split(',')[1];
+                } else {
+                  base64Data = dataUrl;
+                }
+                
+                // Validate: skip empty or invalid uploads
+                if (base64Data && base64Data.length > 0 && filename) {
+                  // Only add if not already in uploadedFiles
+                  const exists = fileUploads.some(fu => fu.filename === filename);
+                  if (!exists) {
+                    fileUploads.push({
+                      base64_data: base64Data,
+                      filename: filename,
+                      mime_type: mimeType
+                    });
+                  }
+                  
+                  // Remove marker from query
+                  cleanQuery = cleanQuery.replace(match[0], `[Uploaded file: ${filename}]`);
+                }
+              }
+              
               try {
+                const requestBody = {
+                  query: cleanQuery,
+                  user_id: null,
+                  conversation_id: conversationId,
+                  options: { debug }
+                };
+                
+                // Add file uploads if any (preferred: structured field)
+                if (fileUploads.length > 0) {
+                  requestBody.file_uploads = fileUploads;
+                }
+                
                 const resp = await fetch('/api/query', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ query, user_id: null, conversation_id: conversationId, options: { debug } })
+                  body: JSON.stringify(requestBody)
                 });
                 const data = await resp.json();
                 setStatus('');
@@ -311,6 +492,12 @@ def render_home() -> HTMLResponse:
                 setUsedAgents(data.used_agents || []);
                 setIntermediate(data.intermediate_results || {});
                 setError(data.error);
+                
+                // Clear uploaded files after successful submission
+                if (filesToSend.length > 0) {
+                  setUploadedFiles([]);
+                  setFileName('');
+                }
                 // confetti
                 try {
                   const s = document.createElement('span');
@@ -340,23 +527,6 @@ def render_home() -> HTMLResponse:
               setFileName(file.name);
               setStatus('Reading file...');
               
-              const reader = new FileReader();
-              reader.onload = (event) => {
-                const fileContent = event.target.result;
-                // If query is empty or just placeholder, replace it; otherwise append
-                if (!query.trim() || query === 'Summarize our project status and flag any deadline risks.') {
-                  setQuery(`Summarize this document:\n\n${fileContent}`);
-                } else {
-                  setQuery(`${query}\n\n--- Document Content ---\n\n${fileContent}`);
-                }
-                setStatus('');
-              };
-              reader.onerror = () => {
-                setStatus('');
-                setError({ message: 'Failed to read file', type: 'file_error' });
-                setFileName('');
-              };
-              
               // Determine file type and MIME type
               const isTextFile = file.type.startsWith('text/') || 
                                  file.name.endsWith('.txt') || 
@@ -369,22 +539,47 @@ def render_home() -> HTMLResponse:
               const isDOCX = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
                             file.name.endsWith('.docx');
               
+              const reader = new FileReader();
+              
+              reader.onerror = () => {
+                setStatus('');
+                setError({ message: 'Failed to read file', type: 'file_error' });
+                setFileName('');
+                setUploadedFiles([]);
+              };
+              
               if (isTextFile) {
-                // Read text files as text
+                // Read text files as text and embed directly
+                reader.onload = (event) => {
+                  const fileContent = event.target.result;
+                  if (!query.trim() || query === 'Summarize our project status and flag any deadline risks.') {
+                    setQuery(`Summarize this document:\n\n${fileContent}`);
+                  } else {
+                    setQuery(`${query}\n\n--- Document Content ---\n\n${fileContent}`);
+                  }
+                  setStatus('');
+                  setUploadedFiles([]); // Text files are embedded, no separate upload needed
+                };
                 reader.readAsText(file);
               } else if (isPDF || isDOCX) {
-                // For PDF/DOCX, convert to base64 data URL and embed in query
+                // For PDF/DOCX, convert to base64 and track separately
                 reader.onload = (event) => {
-                  const base64 = event.target.result.split(',')[1]; // Remove data URL prefix
+                  const dataUrl = event.target.result;
+                  const base64 = dataUrl.split(',')[1]; // Remove data URL prefix
                   const mimeType = isPDF ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-                  const dataUrl = `data:${mimeType};base64,${base64}`;
                   
-                  // Embed file info in query using special format that supervisor can parse
-                  const fileInfo = `[FILE_UPLOAD:${dataUrl}:${file.name}:${mimeType}]`;
+                  // Store file separately for structured upload
+                  setUploadedFiles([{
+                    base64_data: base64,
+                    filename: file.name,
+                    mime_type: mimeType
+                  }]);
+                  
+                  // Update query to indicate file is attached
                   if (!query.trim() || query === 'Summarize our project status and flag any deadline risks.') {
-                    setQuery(`Summarize this document: ${fileInfo}`);
-                  } else {
-                    setQuery(`${query}\n\n${fileInfo}`);
+                    setQuery('Summarize the attached document');
+                  } else if (!query.toLowerCase().includes('summarize') && !query.toLowerCase().includes('document')) {
+                    setQuery(`${query}\n\nSummarize the attached document`);
                   }
                   setStatus('');
                 };
@@ -394,6 +589,7 @@ def render_home() -> HTMLResponse:
                 setStatus('');
                 setError({ message: `File type ${file.type || 'unknown'} not supported. Supported: text files, PDF, DOCX.`, type: 'file_error' });
                 setFileName('');
+                setUploadedFiles([]);
               }
             };
 
@@ -449,7 +645,7 @@ def render_home() -> HTMLResponse:
                   <label className="section-title">Answer</label>
                   <div className="result-box">
                     <button className="copy-btn" onClick={handleCopy}>Copy</button>
-                    {answer || (status ? '…thinking…' : 'No answer yet.')}
+                    {answer ? renderMarkdown(answer) : (status ? '…thinking…' : 'No answer yet.')}
                   </div>
                   {error && <div className="small" style={{ color: '#f87171', marginTop: 8 }}>Error: {error.message}</div>}
                 </div>

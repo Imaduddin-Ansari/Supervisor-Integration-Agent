@@ -16,6 +16,21 @@ class FrontendOptions(BaseModel):
     debug: bool = False
 
 
+class FileUpload(BaseModel):
+    """
+    File upload data from frontend.
+    
+    Attributes:
+        base64_data: Base64-encoded file content
+        filename: Original filename
+        mime_type: MIME type of the file (e.g., application/pdf, text/plain)
+    """
+    
+    base64_data: str = Field(..., min_length=1, description="Base64-encoded file content")
+    filename: str = Field(..., min_length=1, description="Original filename")
+    mime_type: str = Field(..., description="MIME type of the file")
+
+
 class FrontendRequest(BaseModel):
     """Incoming payload from the browser."""
 
@@ -23,6 +38,10 @@ class FrontendRequest(BaseModel):
     user_id: Optional[str] = None
     conversation_id: Optional[str] = None
     options: FrontendOptions = Field(default_factory=FrontendOptions)
+    file_uploads: Optional[List[FileUpload]] = Field(
+        default=None,
+        description="List of file uploads. Preferred over embedding in query text."
+    )
 
 
 class UsedAgentEntry(BaseModel):

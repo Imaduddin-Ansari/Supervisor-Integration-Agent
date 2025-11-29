@@ -10,12 +10,13 @@ from typing import Dict
 
 from fastapi import FastAPI, HTTPException
 import logging
-import re 
-import base64
+
+logger = logging.getLogger(__name__)
 
 from .answer import compose_final_answer
 from .conversation import append_turn, get_history
 from .executor import execute_plan
+from .file_utils import normalize_file_uploads
 from .models import FrontendRequest, SupervisorResponse
 from .planner import plan_tools_with_llm
 from .registry import load_registry
@@ -53,39 +54,26 @@ def build_app() -> FastAPI:
         conversation_id = payload.conversation_id or str(uuid.uuid4())
         history = get_history(conversation_id)
 
-        file_uploads = []
-        query_text = payload.query
-        # Pattern: [FILE_UPLOAD:data:mime;base64,base64data:filename:mime_type]
-        # Match from the end since data URL contains colons
-        # Format: [FILE_UPLOAD:<data_url>:<filename>:<mime_type>]
-        file_pattern = r'\[FILE_UPLOAD:(.+):([^:]+):([^\]]+)\]'
-        matches = re.findall(file_pattern, query_text)
+        # Normalize file uploads: prefer structured field, fallback to query text parsing
+        structured_uploads = None
+        if payload.file_uploads:
+            # Convert Pydantic models to dicts for utility function
+            structured_uploads = [
+                {
+                    'base64_data': fu.base64_data,
+                    'filename': fu.filename,
+                    'mime_type': fu.mime_type
+                }
+                for fu in payload.file_uploads
+            ]
         
-        for match in matches:
-            # match[0] = data URL part (contains colons)
-            # match[1] = filename (no colons)
-            # match[2] = mime_type (no brackets)
-            data_url_part = match[0]
-            filename = match[1]
-            mime_type = match[2]
-            
-            # Extract base64 data from data URL
-            # Format: data:application/...;base64,<base64data>
-            if 'base64,' in data_url_part:
-                base64_data = data_url_part.split('base64,')[1]
-            elif ',' in data_url_part:
-                # Fallback: split by comma and take last part
-                base64_data = data_url_part.split(',')[-1]
-            else:
-                base64_data = data_url_part
-                
-            file_uploads.append({
-                'base64_data': base64_data,
-                'filename': filename,
-                'mime_type': mime_type
-            })
-            # Remove file upload markers from query text
-            query_text = re.sub(r'\[FILE_UPLOAD:' + re.escape(data_url_part) + r':' + re.escape(filename) + r':' + re.escape(mime_type) + r'\]', f'[Uploaded file: {filename}]', query_text)
+        query_text, file_uploads = normalize_file_uploads(structured_uploads, payload.query)
+        
+        # Debug: Log file uploads if present
+        if file_uploads:
+            logger.info(f"File uploads detected: {len(file_uploads)} file(s)")
+            for i, fu in enumerate(file_uploads):
+                logger.info(f"  File {i+1}: {fu.get('filename', 'unknown')} ({fu.get('mime_type', 'unknown')}), size: {len(fu.get('base64_data', ''))} chars")
 
         plan = plan_tools_with_llm(query_text, registry, history=history)
 
