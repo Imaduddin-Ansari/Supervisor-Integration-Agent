@@ -23,18 +23,30 @@ async def call_agent(
     intent: str,
     text: str,
     context: Dict[str, Any],
+    custom_input: Dict[str, Any] = None,
 ) -> AgentResponse:
     """
     Build handshake request and invoke the worker. When endpoints are not real,
     we fall back to simulated results that mirror the contract.
+    
+    Args:
+        custom_input: Optional dict to override default input structure.
+                     If provided, it replaces the entire input payload.
     """
 
     request_id = str(uuid.uuid4())
+    
+    # Use custom_input if provided, otherwise use default structure
+    input_payload = custom_input if custom_input is not None else {
+        "text": text, 
+        "metadata": {"language": "en", "extra": {}}
+    }
+    
     handshake = AgentRequest(
         request_id=request_id,
         agent_name=agent_meta.name,
         intent=intent,
-        input={"text": text, "metadata": {"language": "en", "extra": {}}},
+        input=input_payload,
         context=context,
     )
 
